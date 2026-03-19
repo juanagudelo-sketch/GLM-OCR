@@ -1,0 +1,38 @@
+# Dependencias
+node_modules/
+package-lock.json
+
+# Archivos temporales
+uploads/
+logs/
+*.log
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build
+dist/
+build/
+
+# Debugging
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.bak
+*.tmp
+.cache/

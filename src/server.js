@@ -4,6 +4,9 @@ import fs from "fs";
 import path from "path";
 import { extraerTextoOCR } from "./services/ocrService.js";
 import { extraerDatosFactura } from "./services/facturaService.js";
+import { guardarFacturas } from "./services/dbService.js";
+import { validarCoherencia } from "./services/coherenceValidator.js";
+import "./models/index.js"; // Cargar modelos para sincronización
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
@@ -128,15 +131,65 @@ app.post("/extraer-factura", upload.single("archivo"), async (req, res) => {
   fs.renameSync(req.file.path, filePath);
 
   try {
-    console.log(`[1/2] OCR: ${req.file.originalname}`);
+    console.log("\n" + "=".repeat(60));
+    console.log(`📄 Procesando: ${req.file.originalname}`);
+    console.log("=".repeat(60));
+
+    console.log("\n[1/3] 🔍 Extrayendo texto con GLM-OCR...");
     const textoOCR = await extraerTextoOCR(filePath);
+    console.log(`✓ Texto extraído: ${textoOCR.length} caracteres`);
 
-    console.log("[2/2] Estructurando con Gemini...");
-    const factura = await extraerDatosFactura(textoOCR);
+    console.log("\n[2/3] 🤖 Estructurando datos con Gemini...");
+    const resultado = await extraerDatosFactura(textoOCR);
+    console.log(`✓ Estructura obtenida: ${resultado.invoices?.length || 0} factura(s)`);
 
-    res.json(factura);
+    console.log("\n[3/3] 🔍 Validando coherencia OCR vs Gemini...");
+    const coherencia = validarCoherencia(textoOCR, resultado);
+    
+    if (!coherencia.coherente) {
+      console.log("❌ Errores de coherencia:");
+      coherencia.errores.forEach((err) => console.log(`   - ${err}`));
+    }
+    
+    if (coherencia.advertencias.length > 0) {
+      console.log("⚠️  Advertencias:");
+      coherencia.advertencias.forEach((adv) => console.log(`   - ${adv}`));
+    }
+    
+    if (coherencia.coherente) {
+      console.log(`✓ Coherencia validada: ${coherencia.advertencias.length} advertencia(s)`);
+    }
+
+    // Guardar en BD solo si es coherente
+    if (coherencia.coherente && resultado.invoices?.length > 0) {
+      console.log("\n💾 Guardando en base de datos...");
+      const dbResult = await guardarFacturas(resultado.invoices, req.file.originalname);
+
+      if (dbResult.guardadas.length > 0) {
+        console.log(`✅ Guardadas: ${dbResult.guardadas.length} factura(s)`);
+        console.log(`   IDs: ${dbResult.guardadas.join(", ")}`);
+      }
+
+      if (dbResult.errores.length > 0) {
+        console.log("❌ Errores al guardar:");
+        dbResult.errores.forEach(({ indice, error }) => {
+          console.log(`   Factura ${indice}: ${error}`);
+        });
+      }
+    } else if (!coherencia.coherente) {
+      console.log("\n⚠️  No se guardará en BD por falta de coherencia");
+    }
+
+    console.log("\n" + "=".repeat(60));
+    console.log("✓ Procesamiento completado");
+    console.log("=".repeat(60) + "\n");
+
+    res.json(resultado);
+    
   } catch (err) {
+    console.error("\n❌ ERROR CRÍTICO:");
     console.error(err);
+    console.log("\n" + "=".repeat(60) + "\n");
     res.status(500).json({ error: err.message });
   } finally {
     fs.existsSync(filePath) && fs.unlinkSync(filePath);
