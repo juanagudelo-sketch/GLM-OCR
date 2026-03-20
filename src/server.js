@@ -6,6 +6,7 @@ import { extraerTextoOCR } from "./services/ocrService.js";
 import { extraerDatosFactura } from "./services/facturaService.js";
 import { guardarFacturas } from "./services/dbService.js";
 import { validarCoherencia } from "./services/coherenceValidator.js";
+import { iniciarLog, log, guardarLog } from "./utils/logger.js";
 import "./models/index.js"; // Cargar modelos para sincronización
 
 const app = express();
@@ -130,66 +131,76 @@ app.post("/extraer-factura", upload.single("archivo"), async (req, res) => {
   const filePath = `${req.file.path}${ext}`;
   fs.renameSync(req.file.path, filePath);
 
+  // Iniciar log de procesamiento
+  iniciarLog(req.file.originalname.replace(/[^a-zA-Z0-9]/g, "_"));
+
   try {
-    console.log("\n" + "=".repeat(60));
-    console.log(`📄 Procesando: ${req.file.originalname}`);
-    console.log("=".repeat(60));
+    log("============================================================");
+    log(`Procesando: ${req.file.originalname}`);
+    log("============================================================");
 
-    console.log("\n[1/3] 🔍 Extrayendo texto con GLM-OCR...");
+    log("\n[1/3] Extrayendo texto con GLM-OCR...");
     const textoOCR = await extraerTextoOCR(filePath);
-    console.log(`✓ Texto extraído: ${textoOCR.length} caracteres`);
+    log(`Texto extraido: ${textoOCR.length} caracteres`);
 
-    console.log("\n[2/3] 🤖 Estructurando datos con Gemini...");
+    log("\n[2/3] Estructurando datos con Gemini...");
     const resultado = await extraerDatosFactura(textoOCR);
-    console.log(`✓ Estructura obtenida: ${resultado.invoices?.length || 0} factura(s)`);
+    log(`Estructura obtenida: ${resultado.invoices?.length || 0} factura(s)`);
 
-    console.log("\n[3/3] 🔍 Validando coherencia OCR vs Gemini...");
+    log("\n[3/3] Validando coherencia OCR vs Gemini...");
     const coherencia = validarCoherencia(textoOCR, resultado);
     
     if (!coherencia.coherente) {
-      console.log("❌ Errores de coherencia:");
-      coherencia.errores.forEach((err) => console.log(`   - ${err}`));
+      log("ERRORES DE COHERENCIA:");
+      coherencia.errores.forEach((err) => log(`  - ${err}`));
     }
     
     if (coherencia.advertencias.length > 0) {
-      console.log("⚠️  Advertencias:");
-      coherencia.advertencias.forEach((adv) => console.log(`   - ${adv}`));
+      log("ADVERTENCIAS:");
+      coherencia.advertencias.forEach((adv) => log(`  - ${adv}`));
     }
     
     if (coherencia.coherente) {
-      console.log(`✓ Coherencia validada: ${coherencia.advertencias.length} advertencia(s)`);
+      log(`Coherencia validada: ${coherencia.advertencias.length} advertencia(s)`);
     }
 
     // Guardar en BD solo si es coherente
     if (coherencia.coherente && resultado.invoices?.length > 0) {
-      console.log("\n💾 Guardando en base de datos...");
+      log("\nGuardando en base de datos...");
       const dbResult = await guardarFacturas(resultado.invoices, req.file.originalname);
 
       if (dbResult.guardadas.length > 0) {
-        console.log(`✅ Guardadas: ${dbResult.guardadas.length} factura(s)`);
-        console.log(`   IDs: ${dbResult.guardadas.join(", ")}`);
+        log(`Guardadas: ${dbResult.guardadas.length} factura(s)`);
+        log(`IDs: ${dbResult.guardadas.join(", ")}`);
       }
 
       if (dbResult.errores.length > 0) {
-        console.log("❌ Errores al guardar:");
+        log("ERRORES AL GUARDAR:");
         dbResult.errores.forEach(({ indice, error }) => {
-          console.log(`   Factura ${indice}: ${error}`);
+          log(`  Factura ${indice}: ${error}`);
         });
       }
     } else if (!coherencia.coherente) {
-      console.log("\n⚠️  No se guardará en BD por falta de coherencia");
+      log("\nNo se guardara en BD por falta de coherencia");
     }
 
-    console.log("\n" + "=".repeat(60));
-    console.log("✓ Procesamiento completado");
-    console.log("=".repeat(60) + "\n");
+    log("\n============================================================");
+    log("Procesamiento completado");
+    log("============================================================");
+
+    const logFile = guardarLog();
+    console.log(`Log guardado: ${logFile}`);
 
     res.json(resultado);
     
   } catch (err) {
-    console.error("\n❌ ERROR CRÍTICO:");
-    console.error(err);
-    console.log("\n" + "=".repeat(60) + "\n");
+    log("\nERROR CRITICO:");
+    log(err.message);
+    log(err.stack);
+    
+    const logFile = guardarLog();
+    console.log(`Log guardado: ${logFile}`);
+    
     res.status(500).json({ error: err.message });
   } finally {
     fs.existsSync(filePath) && fs.unlinkSync(filePath);
