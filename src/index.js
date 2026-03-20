@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { extraerTextoOCR } from "./services/ocrService.js";
 import { extraerDatosFactura } from "./services/facturaService.js";
+import { validarCoherencia } from "./services/coherenceValidator.js";
 
 const FORMATOS_SOPORTADOS = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
 
@@ -27,16 +28,40 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[1/2] Extrayendo texto con GLM-OCR: ${filePath}`);
+  console.log("\n" + "=".repeat(60));
+  console.log(`📄 Procesando: ${filePath}`);
+  console.log("=".repeat(60));
+
+  console.log("\n[1/3] 🔍 Extrayendo texto con GLM-OCR...");
   const textoOCR = await extraerTextoOCR(filePath);
-  console.log("\nTexto extraído:");
-  console.log(textoOCR);
+  console.log(`✓ Texto extraído: ${textoOCR.length} caracteres\n`);
 
-  console.log("\n[2/2] Estructurando datos con Gemini...");
-  const factura = await extraerDatosFactura(textoOCR);
+  console.log("[2/3] 🤖 Estructurando datos con Gemini...");
+  const resultado = await extraerDatosFactura(textoOCR);
+  console.log(`✓ Estructura obtenida: ${resultado.invoices?.length || 0} factura(s)\n`);
 
-  console.log("\nFactura estructurada:");
-  console.log(JSON.stringify(factura, null, 2));
+  console.log("[3/3] 🔍 Validando coherencia OCR vs Gemini...");
+  const coherencia = validarCoherencia(textoOCR, resultado);
+  
+  if (!coherencia.coherente) {
+    console.log("❌ Errores de coherencia:");
+    coherencia.errores.forEach((err) => console.log(`   - ${err}`));
+  }
+  
+  if (coherencia.advertencias.length > 0) {
+    console.log("⚠️  Advertencias:");
+    coherencia.advertencias.forEach((adv) => console.log(`   - ${adv}`));
+  }
+  
+  if (coherencia.coherente) {
+    console.log(`✓ Coherencia validada: ${coherencia.advertencias.length} advertencia(s)`);
+  }
+
+  console.log("\n" + "=".repeat(60));
+  console.log("📊 RESULTADO FINAL");
+  console.log("=".repeat(60));
+  console.log(JSON.stringify(resultado, null, 2));
+  console.log("=".repeat(60) + "\n");
 }
 
 main().catch((err) => {
